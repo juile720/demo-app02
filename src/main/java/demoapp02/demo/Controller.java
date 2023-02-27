@@ -7,7 +7,7 @@ public class Controller {
 
     String msg = "%s님 반갑습니다.";
 
-    @GetMapping("/")
+    @PostMapping("/")
     String Start() {
         return "호출성공, 반갑습니다.";
     }
