@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{RELEASE_NAME}}-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "http://*.kbstar.com, https://*.kbstar.com, http://localhost:8080, http://localhost:8081"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "X-Token, X-API-Token, Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization"
+spec:
+  defaultBackend:
+    service:
+      name: {{RELEASE_NAME}}
+      port:
+        number: 80
+  ingressClassName: public-iks-k8s-nginx
+  rules:
+    - host: {{RELEASE_NAME}}.kbstar.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{RELEASE_NAME}}
+                port:
+                  number: 80
+

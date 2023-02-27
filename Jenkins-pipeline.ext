@@ -1,0 +1,144 @@
+// Basic Pipeline
+
+pipeline {
+    environment {
+         RELEASE_NAME = "demo-app02" // *** 여기를 수정 ***
+         REGISTRY_NS = "demo01" // *** 여기도 수정 : Harbor의 project명과 동일 ***
+         REGISTRY_URL = "harbor.gaeco.net"
+         MAJOR_PREFIX = "0.1"
+         DEPLOYMENT_NS = "default" // Kubernetes Cluster Namespace
+         RESOURCE_GROUP = "Default" // IKS Resource Group
+    }
+
+    agent any
+
+    stages {
+         stage ('Initialize') {
+            steps {
+                sh '''#!/bin/bash
+                  if [ -z "${API_KEY}"  ]; then
+                    echo "FATAL ERROR: API_KEY undefined, exiting pipeline"
+                    exit 22
+                 else
+                    echo "API_KEY is set to (shhh, its a secret)"
+                 fi
+                 if [ -z "${CLUSTER_NAME}"  ]; then
+                    echo "FATAL ERROR: CLUSTER_NAME undefined, exiting pipeline"
+                    exit 22
+                 else
+                    echo "CLUSTER_NAME set to ${CLUSTER_NAME}"
+                 fi
+                 if [ -z "${REGISTRY_NS}"  ]; then
+                    echo "FATAL ERROR: REGISTRY_NS undefined, exiting pipeline"
+                    exit 22
+                 else
+                    echo "REGISTRY_NS set to ${REGISTRY_NS}"
+                 fi
+                 if [ -z "${REGION}"  ]; then
+                    echo "FATAL ERROR: REGION undefined, exiting pipeline"
+                    exit 22
+                 else
+                    echo "REGION set to ${REGION}"
+                 fi
+                 if [ -z "${RESOURCE_GROUP}"  ]; then
+                    echo "FATAL ERROR: RESOURCE_GROUP undefined, exiting pipeline"
+                    exit 22
+                 else
+                    echo "RESOURCE_GROUP set to ${RESOURCE_GROUP}"
+                 fi
+
+                 if [ -z "${DEPLOYMENT_NS}"  ]; then
+                    echo "FATAL ERROR: DEPLOYMENT_NS undefined, exiting pipeline"
+                    exit 22
+                 else
+                    echo "DEPLOYMENT_NS set to ${DEPLOYMENT_NS}"
+                 fi
+
+                 if [ -z "${RELEASE_NAME}"  ]; then
+                    echo "FATAL ERROR: RELEASE_NAME undefined, exiting pipeline"
+                    exit 22
+                 else
+                    echo "RELEASE_NAME set to ${RELEASE_NAME}"
+                 fi
+                '''
+            }
+         }
+
+      stage('Checkout Code') {
+         steps {
+            checkout scm
+         }
+      }
+
+      stage('Spring Boot Package') {
+         steps {
+                script {
+                   echo "./gradlew bootJar"
+                   sh './gradlew bootJar'
+                }
+         }
+      }
+
+       stage('Build Docker Image') {
+            steps {
+                script {
+                   echo "docker build -f ./k8s/Dockerfile -t ${REGISTRY_URL}/${REGISTRY_NS}/${RELEASE_NAME}:${MAJOR_PREFIX}.${BUILD_NUMBER} ."
+                   sh 'docker build -f ./k8s/Dockerfile -t ${REGISTRY_URL}/${REGISTRY_NS}/${RELEASE_NAME}:${MAJOR_PREFIX}.${BUILD_NUMBER} .'
+                }
+
+            }
+       }
+
+       stage('Push Docker Image to Registry') {
+          steps {
+                 echo "docker login -u '${HARBOR_ID}' -p ${HARBOR_PWD} ${env.REGISTRY_URL}"
+                 sh """#!/bin/bash
+                 docker login -u '${HARBOR_ID}' -p ${HARBOR_PWD} ${env.REGISTRY_URL}
+                 """
+                 echo "docker push ${env.REGISTRY_URL}/${env.REGISTRY_NS}/${RELEASE_NAME}:${env.MAJOR_PREFIX}.${env.BUILD_NUMBER}"
+                 sh """#!/bin/bash
+                 docker push ${env.REGISTRY_URL}/${env.REGISTRY_NS}/${RELEASE_NAME}:${env.MAJOR_PREFIX}.${env.BUILD_NUMBER}
+                 """
+                 sh """#!/bin/bash
+                 docker rmi ${env.REGISTRY_URL}/${env.REGISTRY_NS}/${RELEASE_NAME}:${env.MAJOR_PREFIX}.${env.BUILD_NUMBER}
+                 """
+           }
+       }
+
+        stage('Deploy new Docker Image') {
+            steps {
+                echo 'Deploying....'
+                    sh """#!/bin/bash
+                    whoami
+                    which ibmcloud
+                    #echo '************** IBM Cloud plugin install cs ************'
+                    #ibmcloud plugin install container-service
+                    echo '************** ibmcloud plugin list ************** '
+                    ibmcloud plugin list
+                    echo '************** IBM Cloud Login ************'
+                    ibmcloud login --apikey ${API_KEY} -r ${env.REGION} -g ${env.RESOURCE_GROUP}
+                    eval \$(ibmcloud ks cluster config --cluster ${env.CLUSTER_NAME})
+                    DEPLOYMENT=`kubectl --namespace=${env.DEPLOYMENT_NS} get deployments -l app=${RELEASE_NAME} --no-headers  -o name`
+                    if [ -z "\$DEPLOYMENT"  ]; then
+                       echo "Deployment not found, deploying for the first time"
+                       echo "---- kubectl apply deployment.yaml ----"
+                       cat ./k8s/deployment.template.yaml | sed "s/{{RELEASE_NAME}}/${RELEASE_NAME}/g" | sed "s/{{IMAGE_REG_PATH}}/${env.REGISTRY_URL}\\/${env.REGISTRY_NS}\\/${RELEASE_NAME}:${env.MAJOR_PREFIX}.${env.BUILD_NUMBER}/g"
+                       cat ./k8s/deployment.template.yaml | sed "s/{{RELEASE_NAME}}/${RELEASE_NAME}/g" | sed "s/{{IMAGE_REG_PATH}}/${env.REGISTRY_URL}\\/${env.REGISTRY_NS}\\/${RELEASE_NAME}:${env.MAJOR_PREFIX}.${env.BUILD_NUMBER}/g" | kubectl apply -f -
+                       #kubectl apply -f ./k8s/.
+                       echo "---- kubectl apply service.yaml ----"
+                       cat ./k8s/service.template.yaml | sed "s/{{RELEASE_NAME}}/${RELEASE_NAME}/g"
+                       cat ./k8s/service.template.yaml | sed "s/{{RELEASE_NAME}}/${RELEASE_NAME}/g" | kubectl apply -f -
+                    else
+                       echo "Existing deployment found, updating to point to image just created "
+                       kubectl --namespace=${env.DEPLOYMENT_NS} get \${DEPLOYMENT} --no-headers -o custom-columns=":metadata.name"
+
+                       # Update Deployment
+                       kubectl --namespace=${env.DEPLOYMENT_NS} set image \${DEPLOYMENT} ${env.RELEASE_NAME}=${env.REGISTRY_URL}/${env.REGISTRY_NS}/${RELEASE_NAME}:${env.MAJOR_PREFIX}.${env.BUILD_NUMBER}
+                       kubectl --namespace=${env.DEPLOYMENT_NS} rollout status \${DEPLOYMENT}
+                    fi
+                    """
+
+            }
+        }
+    }
+}
