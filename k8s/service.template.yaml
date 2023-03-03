@@ -3,7 +3,7 @@ kind: Service
 metadata:
   name: {{RELEASE_NAME}}
   labels:
-    secured: false
+    secured: "false"
 spec:
   ports:
     - name: http
