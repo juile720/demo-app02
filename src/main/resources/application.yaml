@@ -4,6 +4,3 @@ management:
       exposure:
         include: health, info
 
-server:
-  port: 5050
-
